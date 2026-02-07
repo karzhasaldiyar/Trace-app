@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { createHash } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
+import JSZip from "jszip";
 
 export type ActionState = {
   error?: string;
@@ -43,20 +44,126 @@ function validateDocxFile(file: File | null) {
 async function writeDocxFile(
   documentId: string,
   versionNumber: number,
-  file: File
+  file: File,
+  buffer?: Buffer
 ) {
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const fileHash = createHash("sha256").update(buffer).digest("hex");
-  const fileSize = buffer.length;
+  const resolvedBuffer = buffer ?? Buffer.from(await file.arrayBuffer());
+  const fileHash = createHash("sha256").update(resolvedBuffer).digest("hex");
+  const fileSize = resolvedBuffer.length;
   const versionDir = await ensureUploadsDir(documentId);
   const fileName = `v${versionNumber}.docx`;
   const filePath = path.join(versionDir, fileName);
-  await writeFile(filePath, buffer);
+  await writeFile(filePath, resolvedBuffer);
   return {
     fileHash,
     fileSize,
     filePath: path.relative(process.cwd(), filePath)
   };
+}
+
+const XML_ENTITY_MAP: Record<string, string> = {
+  "&lt;": "<",
+  "&gt;": ">",
+  "&amp;": "&",
+  "&quot;": "\"",
+  "&apos;": "'"
+};
+
+function decodeXml(value: string) {
+  return value.replace(
+    /&(lt|gt|amp|quot|apos);/g,
+    (match) => XML_ENTITY_MAP[match] ?? match
+  );
+}
+
+function extractTextFromXml(fragment: string) {
+  const textMatches = fragment.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g);
+  const parts = Array.from(textMatches, (match) => decodeXml(match[1] ?? ""));
+  const withTabs = fragment.includes("<w:tab")
+    ? parts.flatMap((part) => [part, " "])
+    : parts;
+  return withTabs.join("").replace(/\s+/g, " ").trim();
+}
+
+async function parseDocxContent(buffer: Buffer) {
+  const zip = await JSZip.loadAsync(buffer);
+  const documentXml = zip.file("word/document.xml");
+  if (!documentXml) {
+    throw new Error("Document XML not found.");
+  }
+  const xml = await documentXml.async("string");
+
+  const paragraphMatches = xml.matchAll(/<w:p[\s\S]*?<\/w:p>/g);
+  const lines = Array.from(paragraphMatches, (match) =>
+    extractTextFromXml(match[0])
+  ).filter((line) => line.length > 0);
+
+  const rowMatches = xml.matchAll(/<w:tr[\s\S]*?<\/w:tr>/g);
+  const tableRows = Array.from(rowMatches, (match) => {
+    const cellMatches = match[0].matchAll(/<w:tc[\s\S]*?<\/w:tc>/g);
+    const cellTexts = Array.from(cellMatches, (cellMatch) =>
+      extractTextFromXml(cellMatch[0])
+    ).filter((text) => text.length > 0);
+    const rowText = cellTexts.join(" | ").trim();
+    return rowText;
+  }).filter((row) => row.length > 0);
+
+  return { lines, tableRows };
+}
+
+type TextChange =
+  | { type: "changed"; before: string; after: string }
+  | { type: "added"; before: ""; after: string };
+
+type ContentSummary = {
+  textChanges: TextChange[];
+  tableRowAdds: { rowsAdded: number; samples: string[] }[];
+};
+
+function buildContentSummary(
+  previous: { lines: string[]; tableRows: string[] },
+  next: { lines: string[]; tableRows: string[] }
+): ContentSummary {
+  const textChanges: TextChange[] = [];
+  const maxLines = Math.max(previous.lines.length, next.lines.length);
+  for (let index = 0; index < maxLines; index += 1) {
+    if (textChanges.length >= 3) {
+      break;
+    }
+    const before = previous.lines[index];
+    const after = next.lines[index];
+    if (before && after && before !== after) {
+      textChanges.push({ type: "changed", before, after });
+    }
+  }
+
+  if (textChanges.length < 3) {
+    const previousSet = new Set(previous.lines);
+    for (const line of next.lines) {
+      if (textChanges.length >= 3) {
+        break;
+      }
+      if (line && !previousSet.has(line)) {
+        textChanges.push({ type: "added", before: "", after: line });
+      }
+    }
+  }
+
+  const previousRowSet = new Set(previous.tableRows);
+  const addedRows = next.tableRows.filter(
+    (row) => row && !previousRowSet.has(row)
+  );
+  const tableRowAdds =
+    addedRows.length > 0
+      ? [
+          {
+            rowsAdded: addedRows.length,
+            samples: addedRows.slice(0, 2)
+          }
+        ]
+      : [];
+
+  return { textChanges, tableRowAdds };
 }
 
 function getActorName(formData: FormData) {
@@ -454,7 +561,42 @@ export async function addDocumentVersion(
       return Math.max(max, version.versionNumber);
     }, 0) + 1;
 
-  const fileData = await writeDocxFile(documentId, nextVersion, fileResult.file);
+  const newFileBuffer = Buffer.from(await fileResult.file.arrayBuffer());
+  const fileData = await writeDocxFile(
+    documentId,
+    nextVersion,
+    fileResult.file,
+    newFileBuffer
+  );
+
+  let contentSummary: ContentSummary | undefined;
+  let contentSummaryError: string | undefined;
+
+  if (nextVersion > 1) {
+    const previousVersion = document.versions.reduce((latest, version) => {
+      if (version.versionNumber < nextVersion) {
+        return version.versionNumber > (latest?.versionNumber ?? 0)
+          ? version
+          : latest;
+      }
+      return latest;
+    }, undefined as (typeof document.versions)[number] | undefined);
+
+    try {
+      if (!previousVersion) {
+        throw new Error("Previous version not found.");
+      }
+      const previousBuffer = await readFile(
+        path.join(process.cwd(), previousVersion.filePath)
+      );
+      const previousContent = await parseDocxContent(previousBuffer);
+      const nextContent = await parseDocxContent(newFileBuffer);
+      contentSummary = buildContentSummary(previousContent, nextContent);
+    } catch (error) {
+      contentSummaryError =
+        error instanceof Error ? error.message : "Unable to parse content.";
+    }
+  }
 
   await prisma.documentVersion.create({
     data: {
@@ -483,7 +625,11 @@ export async function addDocumentVersion(
       actorName: actorResult.actorName,
       eventType: "DOC_VERSION_UPLOADED",
       message: `${actorResult.actorName} uploaded v${nextVersion} for ${document.title}.`,
-      payloadJson: JSON.stringify({ version: nextVersion })
+      payloadJson: JSON.stringify({
+        version: nextVersion,
+        ...(contentSummary ? { contentSummary } : {}),
+        ...(contentSummaryError ? { contentSummaryError } : {})
+      })
     }
   });
 
