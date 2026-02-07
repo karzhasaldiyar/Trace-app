@@ -1,32 +1,60 @@
+import { prisma } from "@/lib/prisma";
+import {
+  formatShortDate,
+  formatStatusLabel,
+  formatTimestampLabel
+} from "@/lib/format";
+import { addDocumentVersion, updateDocumentMetadata } from "@/lib/actions";
+import DocumentMetadataForm from "@/components/forms/DocumentMetadataForm";
+import DocumentVersionForm from "@/components/forms/DocumentVersionForm";
+
 const tabs = ["Metadata", "Versions", "History"];
 
-const versions = [
-  { id: "v3", date: "Mar 8, 2025", note: "Updated SLA section", author: "Jordan Lee" },
-  { id: "v2", date: "Feb 27, 2025", note: "Client feedback incorporated", author: "Riley Kim" },
-  { id: "v1", date: "Feb 14, 2025", note: "Initial draft", author: "Priya Patel" }
-];
+export const dynamic = "force-dynamic";
 
-const history = [
-  {
-    time: "Today · 9:45 AM",
-    message: "Document moved to In Review by Jordan Lee."
-  },
-  {
-    time: "Yesterday · 2:11 PM",
-    message: "New version v3 uploaded with updated SLA section."
-  },
-  {
-    time: "Feb 27 · 4:08 PM",
-    message: "Assigned to Riley Kim for technical review."
+export default async function DocumentDetailPage({
+  params
+}: {
+  params: { id: string };
+}) {
+  const document = await prisma.document.findUnique({
+    where: { id: params.id },
+    include: {
+      assignedMember: true,
+      versions: {
+        orderBy: { versionNumber: "desc" }
+      },
+      activityLogs: {
+        orderBy: { ts: "desc" }
+      }
+    }
+  });
+
+  if (!document) {
+    return (
+      <div className="space-y-2">
+        <h1 className="text-2xl font-semibold text-slate-900">
+          Document not found
+        </h1>
+        <p className="text-sm text-slate-600">
+          The document could not be located in the database.
+        </p>
+      </div>
+    );
   }
-];
 
-export default function DocumentDetailPage() {
+  const metadataAction = updateDocumentMetadata.bind(null, document.id);
+  const versionAction = addDocumentVersion.bind(null, document.id);
+  const tags = JSON.parse(document.tagsJson || "[]") as string[];
+  const dueDateValue = document.dueDate
+    ? document.dueDate.toISOString().split("T")[0]
+    : "";
+
   return (
     <div className="space-y-8">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold text-slate-900">
-          Vendor Agreement
+          {document.title}
         </h1>
         <p className="text-sm text-slate-600">
           Review metadata, versions, and document history.
@@ -49,89 +77,39 @@ export default function DocumentDetailPage() {
       </div>
 
       <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <div className="card space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">Edit metadata</h2>
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="text-sm font-medium text-slate-700">
-              Due date
-              <input
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                type="date"
-              />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Status
-              <select className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2">
-                <option>Draft</option>
-                <option>In Review</option>
-                <option>Final</option>
-                <option>Sent</option>
-              </select>
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Assigned
-              <input
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                placeholder="Assignee name"
-              />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Tags
-              <input
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                placeholder="security, compliance"
-              />
-            </label>
-          </div>
-          <button className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">
-            Save metadata
-          </button>
-        </div>
+        <DocumentMetadataForm
+          action={metadataAction}
+          defaultDueDate={dueDateValue}
+          defaultStatus={formatStatusLabel(document.status)}
+          defaultAssigned={document.assignedMember?.name ?? ""}
+          defaultTags={tags.join(", ")}
+        />
 
-        <div className="card space-y-4">
-          <h3 className="text-base font-semibold text-slate-900">
-            Upload new version
-          </h3>
-          <p className="text-sm text-slate-600">
-            Add a .docx and provide a mandatory change note.
-          </p>
-          <div className="space-y-3">
-            <button className="w-full rounded-lg border border-dashed border-accent bg-white px-4 py-6 text-sm font-semibold text-accent">
-              Upload .docx
-            </button>
-            <label className="block text-sm font-medium text-slate-700">
-              Change note (required)
-              <textarea
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                rows={4}
-                placeholder="Describe what changed in this version"
-              />
-            </label>
-            <button className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">
-              Submit version
-            </button>
-          </div>
-        </div>
+        <DocumentVersionForm action={versionAction} />
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="card space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">Versions</h2>
           <div className="space-y-3">
-            {versions.map((version) => (
+            {document.versions.map((version) => (
               <div
                 key={version.id}
                 className="rounded-lg border border-slate-200 bg-white p-4"
               >
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-slate-900">
-                    {version.id}
+                    v{version.versionNumber}
                   </div>
-                  <div className="text-xs text-slate-500">{version.date}</div>
+                  <div className="text-xs text-slate-500">
+                    {formatShortDate(version.createdAt)}
+                  </div>
                 </div>
-                <div className="mt-2 text-sm text-slate-700">{version.note}</div>
+                <div className="mt-2 text-sm text-slate-700">
+                  {version.changeNote}
+                </div>
                 <div className="mt-2 text-xs text-slate-500">
-                  Uploaded by {version.author}
+                  Uploaded by {version.actorName}
                 </div>
               </div>
             ))}
@@ -141,13 +119,13 @@ export default function DocumentDetailPage() {
         <div className="card space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">History</h2>
           <div className="space-y-3">
-            {history.map((item) => (
+            {document.activityLogs.map((item) => (
               <div
-                key={item.time}
+                key={item.id}
                 className="rounded-lg border border-slate-200 bg-white p-4"
               >
                 <div className="text-xs font-semibold text-slate-500">
-                  {item.time}
+                  {formatTimestampLabel(item.ts)}
                 </div>
                 <div className="mt-2 text-sm text-slate-700">{item.message}</div>
               </div>

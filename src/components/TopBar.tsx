@@ -1,9 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const STORAGE_KEY = "trace-actor-name";
+const EVENT_NAME = "trace-actor-name";
 
 export default function TopBar() {
-  const [actorName, setActorName] = useState("Jordan Lee");
+  const [actorName, setActorName] = useState(() => {
+    if (typeof window === "undefined") {
+      return "Jordan Lee";
+    }
+    return localStorage.getItem(STORAGE_KEY) ?? "Jordan Lee";
+  });
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, actorName);
+    window.dispatchEvent(new Event(EVENT_NAME));
+  }, [actorName]);
 
   return (
     <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">

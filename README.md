@@ -6,9 +6,12 @@ Desktop-first enterprise document tracking UI built with Next.js App Router, Typ
 
 ```powershell
 npm install
+npm run prisma:generate
+npm run db:push
+npm run db:seed
 npm run dev
 ```
 
 ## Notes
 - No authentication.
-- Mock data only.
+- SQLite + Prisma-backed data.
