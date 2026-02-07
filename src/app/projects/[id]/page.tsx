@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { formatRoleLabel, formatShortDate, formatStatusLabel, formatTimestampLabel } from "@/lib/format";
-import { addMember } from "@/lib/actions";
+import { addMember, uploadDocument } from "@/lib/actions";
 import AddMemberForm from "@/components/forms/AddMemberForm";
+import ProjectDocumentUploadForm from "@/components/forms/ProjectDocumentUploadForm";
 
 const tabs = ["Documents", "Members", "Activity", "Settings"];
 
@@ -46,6 +47,7 @@ export default async function ProjectDetailPage({
   }
 
   const addMemberAction = addMember.bind(null, project.id);
+  const uploadDocumentAction = uploadDocument.bind(null, project.id);
 
   return (
     <div className="space-y-8">
@@ -175,15 +177,7 @@ export default async function ProjectDetailPage({
           </div>
         </div>
 
-        <div className="card space-y-4">
-          <h3 className="text-base font-semibold text-slate-900">Upload .docx</h3>
-          <p className="text-sm text-slate-600">
-            Placeholder uploader for project documents.
-          </p>
-          <button className="rounded-lg border border-dashed border-accent bg-white px-4 py-6 text-sm font-semibold text-accent">
-            Drag .docx here or browse
-          </button>
-        </div>
+        <ProjectDocumentUploadForm action={uploadDocumentAction} />
       </section>
     </div>
   );
