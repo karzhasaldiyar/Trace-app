@@ -1,54 +1,57 @@
-const documents = [
-  {
-    id: "doc-1",
-    title: "Vendor Agreement",
-    status: "In Review",
-    dueDate: "Mar 12, 2025",
-    version: "v3",
-    assigned: "Riley Kim",
-    stale: true
-  },
-  {
-    id: "doc-2",
-    title: "Security Appendix",
-    status: "Draft",
-    dueDate: "Mar 20, 2025",
-    version: "v1",
-    assigned: "Taylor Brooks",
-    stale: false
-  }
-];
-
-const members = [
-  { name: "Jordan Lee", email: "jordan@trace.dev", role: "Owner" },
-  { name: "Priya Patel", email: "priya@trace.dev", role: "Admin" },
-  { name: "Diego Ortiz", email: "diego@trace.dev", role: "Member" },
-  { name: "Kim Nguyen", email: "kim@trace.dev", role: "Viewer" }
-];
-
-const activity = [
-  {
-    time: "Today · 9:12 AM",
-    message: "Jordan Lee uploaded Vendor Agreement v3 with updated SLA terms."
-  },
-  {
-    time: "Yesterday · 4:40 PM",
-    message: "Priya Patel added Kim Nguyen as a Viewer on the project."
-  },
-  {
-    time: "Mon · 11:05 AM",
-    message: "Riley Kim marked Security Appendix as Draft for review."
-  }
-];
+import { prisma } from "@/lib/prisma";
+import { formatRoleLabel, formatShortDate, formatStatusLabel, formatTimestampLabel } from "@/lib/format";
+import { addMember } from "@/lib/actions";
+import AddMemberForm from "@/components/forms/AddMemberForm";
 
 const tabs = ["Documents", "Members", "Activity", "Settings"];
 
-export default function ProjectDetailPage() {
+export const dynamic = "force-dynamic";
+
+export default async function ProjectDetailPage({
+  params
+}: {
+  params: { id: string };
+}) {
+  const project = await prisma.project.findUnique({
+    where: { id: params.id },
+    include: {
+      members: true,
+      documents: {
+        include: {
+          assignedMember: true,
+          versions: {
+            orderBy: { versionNumber: "desc" },
+            take: 1
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      },
+      activityLogs: {
+        orderBy: { ts: "desc" }
+      }
+    }
+  });
+
+  if (!project) {
+    return (
+      <div className="space-y-2">
+        <h1 className="text-2xl font-semibold text-slate-900">
+          Project not found
+        </h1>
+        <p className="text-sm text-slate-600">
+          The project could not be located in the database.
+        </p>
+      </div>
+    );
+  }
+
+  const addMemberAction = addMember.bind(null, project.id);
+
   return (
     <div className="space-y-8">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold text-slate-900">
-          Alpha Expansion
+          {project.name}
         </h1>
         <p className="text-sm text-slate-600">
           Project overview with shared documents and activity.
@@ -86,13 +89,19 @@ export default function ProjectDetailPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 text-slate-700">
-              {documents.map((doc) => (
+              {project.documents.map((doc) => (
                 <tr key={doc.id}>
                   <td className="py-3 font-medium text-slate-900">{doc.title}</td>
-                  <td className="py-3">{doc.status}</td>
-                  <td className="py-3">{doc.dueDate}</td>
-                  <td className="py-3">{doc.version}</td>
-                  <td className="py-3">{doc.assigned}</td>
+                  <td className="py-3">{formatStatusLabel(doc.status)}</td>
+                  <td className="py-3">{formatShortDate(doc.dueDate)}</td>
+                  <td className="py-3">
+                    {doc.versions[0]
+                      ? `v${doc.versions[0].versionNumber}`
+                      : "—"}
+                  </td>
+                  <td className="py-3">
+                    {doc.assignedMember?.name ?? "—"}
+                  </td>
                   <td className="py-3">
                     {doc.stale ? <span className="badge">Stale</span> : "—"}
                   </td>
@@ -129,13 +138,15 @@ export default function ProjectDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {members.map((member) => (
+                {project.members.map((member) => (
                   <tr key={member.email}>
                     <td className="py-3 font-medium text-slate-900">
                       {member.name}
                     </td>
                     <td className="py-3 text-slate-600">{member.email}</td>
-                    <td className="py-3 text-slate-600">{member.role}</td>
+                    <td className="py-3 text-slate-600">
+                      {formatRoleLabel(member.role)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -143,51 +154,20 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
-        <div className="card space-y-4">
-          <h3 className="text-base font-semibold text-slate-900">Add member</h3>
-          <div className="space-y-3 text-sm text-slate-700">
-            <label className="block">
-              Name
-              <input
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                placeholder="Full name"
-              />
-            </label>
-            <label className="block">
-              Email
-              <input
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                placeholder="name@company.com"
-              />
-            </label>
-            <label className="block">
-              Role
-              <select className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2">
-                <option>Owner</option>
-                <option>Admin</option>
-                <option>Member</option>
-                <option>Viewer</option>
-                <option>Client</option>
-              </select>
-            </label>
-            <button className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">
-              Invite member
-            </button>
-          </div>
-        </div>
+        <AddMemberForm action={addMemberAction} />
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="card space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">Activity</h2>
           <div className="space-y-3">
-            {activity.map((item) => (
+            {project.activityLogs.map((item) => (
               <div
-                key={item.time}
+                key={item.id}
                 className="rounded-lg border border-slate-200 bg-white p-4"
               >
                 <div className="text-xs font-semibold text-slate-500">
-                  {item.time}
+                  {formatTimestampLabel(item.ts)}
                 </div>
                 <div className="mt-2 text-sm text-slate-700">{item.message}</div>
               </div>

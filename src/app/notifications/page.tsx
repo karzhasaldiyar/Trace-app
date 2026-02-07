@@ -1,28 +1,15 @@
-const notifications = [
-  {
-    id: "note-1",
-    title: "Vendor Agreement v3 uploaded",
-    detail: "Jordan Lee added a new version with SLA updates.",
-    time: "2 hours ago",
-    unread: true
-  },
-  {
-    id: "note-2",
-    title: "New member added",
-    detail: "Kim Nguyen joined Alpha Expansion as Viewer.",
-    time: "Yesterday",
-    unread: false
-  },
-  {
-    id: "note-3",
-    title: "Document nearing due date",
-    detail: "Security Appendix is due in 5 days.",
-    time: "2 days ago",
-    unread: true
-  }
-];
+import { prisma } from "@/lib/prisma";
+import { formatRelativeTime } from "@/lib/format";
+import { markNotificationsRead } from "@/lib/actions";
+import MarkNotificationsReadForm from "@/components/forms/MarkNotificationsReadForm";
 
-export default function NotificationsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function NotificationsPage() {
+  const notifications = await prisma.notification.findMany({
+    orderBy: { ts: "desc" }
+  });
+
   return (
     <div className="space-y-8">
       <header className="flex items-center justify-between">
@@ -34,9 +21,7 @@ export default function NotificationsPage() {
             Recent activity across all projects.
           </p>
         </div>
-        <button className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">
-          Mark read
-        </button>
+        <MarkNotificationsReadForm action={markNotificationsRead} />
       </header>
 
       <section className="space-y-4">
@@ -48,14 +33,14 @@ export default function NotificationsPage() {
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-semibold text-slate-900">
-                  {notification.title}
+                  {notification.type}
                 </h2>
-                {notification.unread && <span className="badge">New</span>}
+                {!notification.isRead && <span className="badge">New</span>}
               </div>
-              <p className="text-sm text-slate-600">{notification.detail}</p>
+              <p className="text-sm text-slate-600">{notification.message}</p>
             </div>
             <div className="text-xs font-semibold text-slate-500">
-              {notification.time}
+              {formatRelativeTime(notification.ts)}
             </div>
           </div>
         ))}
