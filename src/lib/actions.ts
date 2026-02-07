@@ -293,7 +293,7 @@ export async function updateDocumentMetadata(
 
   const document = await prisma.document.findUnique({
     where: { id: documentId },
-    include: { project: true }
+    include: { project: true, assignedMember: true }
   });
 
   if (!document) {
@@ -327,6 +327,45 @@ export async function updateDocumentMetadata(
     .map((tag) => tag.trim())
     .filter(Boolean);
 
+  const memberRole = clientCheck.member?.role;
+  if (status === "FINAL" && memberRole !== "OWNER" && memberRole !== "ADMIN") {
+    return { error: "Only owners and admins can mark documents as Final." };
+  }
+
+  const formatDateValue = (value: Date | null) =>
+    value ? value.toISOString().split("T")[0] : "";
+  const safeTags = (value: string) => {
+    try {
+      return JSON.parse(value) as string[];
+    } catch {
+      return [];
+    }
+  };
+
+  const beforeTags = safeTags(document.tagsJson || "[]");
+  const diffs = [
+    {
+      field: "dueDate",
+      before: formatDateValue(document.dueDate),
+      after: formatDateValue(dueDate)
+    },
+    {
+      field: "status",
+      before: document.status,
+      after: status
+    },
+    {
+      field: "assignedMemberId",
+      before: document.assignedMember?.name ?? "",
+      after: assignedMember?.name ?? ""
+    },
+    {
+      field: "tags",
+      before: JSON.stringify(beforeTags),
+      after: JSON.stringify(tags)
+    }
+  ].filter((diff) => diff.before !== diff.after);
+
   await prisma.document.update({
     where: { id: documentId },
     data: {
@@ -344,21 +383,28 @@ export async function updateDocumentMetadata(
       projectId: document.projectId,
       documentId,
       actorName: actorResult.actorName,
-      eventType: "DOCUMENT_METADATA_UPDATED",
+      eventType: "DOC_METADATA_CHANGED",
       message: `${actorResult.actorName} updated metadata for ${document.title}.`,
-      payloadJson: JSON.stringify({ status, dueDate })
+      payloadJson: JSON.stringify({ diffs })
     }
   });
 
-  await prisma.notification.create({
-    data: {
-      projectId: document.projectId,
-      documentId,
-      actorName: actorResult.actorName,
-      type: "Metadata updated",
-      message: `${document.title} metadata was updated.`
-    }
+  const notifyMembers = await prisma.member.findMany({
+    where: { projectId: document.projectId, role: { not: "CLIENT" } },
+    select: { id: true }
   });
+
+  if (notifyMembers.length > 0) {
+    await prisma.notification.createMany({
+      data: notifyMembers.map(() => ({
+        projectId: document.projectId,
+        documentId,
+        actorName: actorResult.actorName,
+        type: "Metadata updated",
+        message: `${document.title} metadata was updated.`
+      }))
+    });
+  }
 
   revalidatePath(`/documents/${documentId}`);
   revalidatePath(`/projects/${document.projectId}`);

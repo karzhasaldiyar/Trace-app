@@ -9,6 +9,21 @@ import DocumentMetadataForm from "@/components/forms/DocumentMetadataForm";
 import DocumentVersionForm from "@/components/forms/DocumentVersionForm";
 import DocumentVersionDownloadButton from "@/components/DocumentVersionDownloadButton";
 
+type MetadataDiff = {
+  field: string;
+  before: string;
+  after: string;
+};
+
+const parseMetadataDiffs = (payloadJson: string) => {
+  try {
+    const parsed = JSON.parse(payloadJson) as { diffs?: MetadataDiff[] };
+    return parsed.diffs ?? [];
+  } catch {
+    return [];
+  }
+};
+
 const tabs = ["Metadata", "Versions", "History"];
 
 export const dynamic = "force-dynamic";
@@ -132,6 +147,35 @@ export default async function DocumentDetailPage({
                   {formatTimestampLabel(item.ts)}
                 </div>
                 <div className="mt-2 text-sm text-slate-700">{item.message}</div>
+                {item.eventType === "DOC_METADATA_CHANGED" && (
+                  <div className="mt-3 space-y-2 text-xs text-slate-600">
+                    {parseMetadataDiffs(item.payloadJson).map((diff) => (
+                      <div key={diff.field} className="space-y-1">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          {diff.field}
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                            <div className="text-[10px] uppercase text-slate-400">
+                              Before
+                            </div>
+                            <div className="text-xs text-slate-700">
+                              {diff.before || "—"}
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                            <div className="text-[10px] uppercase text-slate-400">
+                              After
+                            </div>
+                            <div className="text-xs text-slate-700">
+                              {diff.after || "—"}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
