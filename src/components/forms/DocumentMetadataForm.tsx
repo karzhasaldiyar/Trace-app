@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef } from "react";
+import type { ChangeEvent } from "react";
 import { useFormState } from "react-dom";
 import ActorNameField from "@/components/ActorNameField";
 import type { ActionState } from "@/lib/actions";
@@ -22,6 +24,22 @@ export default function DocumentMetadataForm({
   defaultTags
 }: Props) {
   const [state, formAction] = useFormState(action, initialState);
+  const previousStatus = useRef(defaultStatus);
+
+  const handleStatusChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const selected = event.target.value;
+    const normalized = selected.toUpperCase().replace(/\s+/g, "_");
+    if (normalized === "FINAL") {
+      const confirmed = window.confirm(
+        "Marking a document as Final is a permanent change. Continue?"
+      );
+      if (!confirmed) {
+        event.target.value = previousStatus.current;
+        return;
+      }
+    }
+    previousStatus.current = selected;
+  };
 
   return (
     <form action={formAction} className="card space-y-4">
@@ -43,6 +61,7 @@ export default function DocumentMetadataForm({
             className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
             name="status"
             defaultValue={defaultStatus}
+            onChange={handleStatusChange}
           >
             <option>Draft</option>
             <option>In Review</option>
