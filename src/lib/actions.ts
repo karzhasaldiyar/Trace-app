@@ -2,10 +2,62 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { createHash } from "crypto";
+import { mkdir, writeFile } from "fs/promises";
+import path from "path";
 
 export type ActionState = {
   error?: string;
 };
+
+const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const DOCX_MIME_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+]);
+
+async function ensureUploadsDir(...parts: string[]) {
+  const uploadRoot = path.join(process.cwd(), "uploads", ...parts);
+  await mkdir(uploadRoot, { recursive: true });
+  return uploadRoot;
+}
+
+function validateDocxFile(file: File | null) {
+  if (!file || file.size === 0) {
+    return { error: "A .docx file is required." };
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    return { error: "File size must be 25MB or less." };
+  }
+
+  const filename = file.name ?? "";
+  const lowerName = filename.toLowerCase();
+  if (!lowerName.endsWith(".docx")) {
+    return { error: "Only .docx files are supported." };
+  }
+  if (!DOCX_MIME_TYPES.has(file.type)) {
+    return { error: "File must be a valid .docx document." };
+  }
+  return { file };
+}
+
+async function writeDocxFile(
+  documentId: string,
+  versionNumber: number,
+  file: File
+) {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const fileHash = createHash("sha256").update(buffer).digest("hex");
+  const fileSize = buffer.length;
+  const versionDir = await ensureUploadsDir(documentId);
+  const fileName = `v${versionNumber}.docx`;
+  const filePath = path.join(versionDir, fileName);
+  await writeFile(filePath, buffer);
+  return {
+    fileHash,
+    fileSize,
+    filePath: path.relative(process.cwd(), filePath)
+  };
+}
 
 function getActorName(formData: FormData) {
   const actorName = String(formData.get("actorName") ?? "").trim();
@@ -160,6 +212,75 @@ export async function addMember(
   return {};
 }
 
+export async function uploadDocument(
+  projectId: string,
+  _prevState: ActionState,
+  formData: FormData
+) {
+  const actorResult = getActorName(formData);
+  if ("error" in actorResult) {
+    return { error: actorResult.error };
+  }
+
+  const clientCheck = await ensureNotClient(projectId, actorResult.actorName);
+  if (clientCheck.error) {
+    return { error: clientCheck.error };
+  }
+
+  const changeNote = String(formData.get("changeNote") ?? "").trim();
+  if (!changeNote) {
+    return { error: "Change note is required." };
+  }
+
+  const fileInput = formData.get("file");
+  const fileResult = validateDocxFile(fileInput instanceof File ? fileInput : null);
+  if ("error" in fileResult) {
+    return { error: fileResult.error };
+  }
+
+  const titleInput = String(formData.get("title") ?? "").trim();
+  const baseFileName = fileResult.file.name.replace(/\.docx$/i, "");
+  const title = titleInput || baseFileName || "Untitled document";
+
+  const document = await prisma.document.create({
+    data: {
+      projectId,
+      title,
+      status: "DRAFT",
+      lastActivityAt: new Date(),
+      stale: false
+    }
+  });
+
+  const fileData = await writeDocxFile(document.id, 1, fileResult.file);
+
+  await prisma.documentVersion.create({
+    data: {
+      documentId: document.id,
+      versionNumber: 1,
+      filePath: fileData.filePath,
+      fileHash: fileData.fileHash,
+      fileSize: fileData.fileSize,
+      changeNote,
+      actorName: actorResult.actorName
+    }
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      projectId,
+      documentId: document.id,
+      actorName: actorResult.actorName,
+      eventType: "DOC_UPLOADED",
+      message: `${actorResult.actorName} uploaded ${title} (v1).`,
+      payloadJson: JSON.stringify({ version: 1 })
+    }
+  });
+
+  revalidatePath(`/projects/${projectId}`);
+  return {};
+}
+
 export async function updateDocumentMetadata(
   documentId: string,
   _prevState: ActionState,
@@ -276,18 +397,26 @@ export async function addDocumentVersion(
     return { error: "Change note is required." };
   }
 
+  const fileInput = formData.get("file");
+  const fileResult = validateDocxFile(fileInput instanceof File ? fileInput : null);
+  if ("error" in fileResult) {
+    return { error: fileResult.error };
+  }
+
   const nextVersion =
     document.versions.reduce((max, version) => {
       return Math.max(max, version.versionNumber);
     }, 0) + 1;
 
+  const fileData = await writeDocxFile(documentId, nextVersion, fileResult.file);
+
   await prisma.documentVersion.create({
     data: {
       documentId,
       versionNumber: nextVersion,
-      filePath: `uploads/${documentId}/v${nextVersion}.docx`,
-      fileHash: "pending",
-      fileSize: 0,
+      filePath: fileData.filePath,
+      fileHash: fileData.fileHash,
+      fileSize: fileData.fileSize,
       changeNote,
       actorName: actorResult.actorName
     }
@@ -306,21 +435,26 @@ export async function addDocumentVersion(
       projectId: document.projectId,
       documentId,
       actorName: actorResult.actorName,
-      eventType: "DOCUMENT_VERSION_ADDED",
+      eventType: "DOC_VERSION_UPLOADED",
       message: `${actorResult.actorName} uploaded v${nextVersion} for ${document.title}.`,
       payloadJson: JSON.stringify({ version: nextVersion })
     }
   });
 
-  await prisma.notification.create({
-    data: {
-      projectId: document.projectId,
-      documentId,
-      actorName: actorResult.actorName,
-      type: "New version uploaded",
-      message: `${document.title} v${nextVersion} was uploaded.`
-    }
+  const recipients = await prisma.member.findMany({
+    where: { projectId: document.projectId, role: { not: "CLIENT" } }
   });
+  if (recipients.length > 0) {
+    await prisma.notification.createMany({
+      data: recipients.map((member) => ({
+        projectId: document.projectId,
+        documentId,
+        actorName: actorResult.actorName,
+        type: "New version uploaded",
+        message: `${document.title} v${nextVersion} was uploaded for ${member.name}.`
+      }))
+    });
+  }
 
   revalidatePath(`/documents/${documentId}`);
   revalidatePath(`/projects/${document.projectId}`);

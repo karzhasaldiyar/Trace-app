@@ -23,9 +23,16 @@ export default function DocumentVersionForm({ action }: Props) {
       </p>
       <ActorNameField />
       <div className="space-y-3">
-        <button className="w-full rounded-lg border border-dashed border-accent bg-white px-4 py-6 text-sm font-semibold text-accent">
+        <label className="flex w-full cursor-pointer items-center justify-center rounded-lg border border-dashed border-accent bg-white px-4 py-6 text-sm font-semibold text-accent">
           Upload .docx
-        </button>
+          <input
+            className="hidden"
+            type="file"
+            name="file"
+            accept=".docx"
+            required
+          />
+        </label>
         <label className="block text-sm font-medium text-slate-700">
           Change note (required)
           <textarea
@@ -33,6 +40,7 @@ export default function DocumentVersionForm({ action }: Props) {
             rows={4}
             name="changeNote"
             placeholder="Describe what changed in this version"
+            required
           />
         </label>
         <button className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">

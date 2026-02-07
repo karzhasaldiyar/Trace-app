@@ -7,6 +7,7 @@ import {
 import { addDocumentVersion, updateDocumentMetadata } from "@/lib/actions";
 import DocumentMetadataForm from "@/components/forms/DocumentMetadataForm";
 import DocumentVersionForm from "@/components/forms/DocumentVersionForm";
+import DocumentVersionDownloadButton from "@/components/DocumentVersionDownloadButton";
 
 const tabs = ["Metadata", "Versions", "History"];
 
@@ -108,8 +109,11 @@ export default async function DocumentDetailPage({
                 <div className="mt-2 text-sm text-slate-700">
                   {version.changeNote}
                 </div>
-                <div className="mt-2 text-xs text-slate-500">
-                  Uploaded by {version.actorName}
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                  <span>Uploaded by {version.actorName}</span>
+                  <DocumentVersionDownloadButton
+                    href={`/documents/${document.id}/versions/${version.id}/download`}
+                  />
                 </div>
               </div>
             ))}
