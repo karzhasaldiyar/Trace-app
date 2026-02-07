@@ -5,8 +5,14 @@ import MarkNotificationsReadForm from "@/components/forms/MarkNotificationsReadF
 
 export const dynamic = "force-dynamic";
 
-export default async function NotificationsPage() {
+export default async function NotificationsPage({
+  searchParams
+}: {
+  searchParams?: { unread?: string };
+}) {
+  const showUnreadOnly = searchParams?.unread === "1";
   const notifications = await prisma.notification.findMany({
+    where: showUnreadOnly ? { isRead: false } : undefined,
     orderBy: { ts: "desc" }
   });
 
@@ -21,7 +27,25 @@ export default async function NotificationsPage() {
             Recent activity across all projects.
           </p>
         </div>
-        <MarkNotificationsReadForm action={markNotificationsRead} />
+        <div className="flex items-center gap-3">
+          <a
+            className={`text-sm font-semibold ${
+              showUnreadOnly ? "text-slate-400" : "text-accent"
+            }`}
+            href="/notifications"
+          >
+            All
+          </a>
+          <a
+            className={`text-sm font-semibold ${
+              showUnreadOnly ? "text-accent" : "text-slate-400"
+            }`}
+            href="/notifications?unread=1"
+          >
+            Unread
+          </a>
+          <MarkNotificationsReadForm action={markNotificationsRead} />
+        </div>
       </header>
 
       <section className="space-y-4">

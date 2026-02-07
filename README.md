@@ -5,6 +5,7 @@ Desktop-first enterprise document tracking UI built with Next.js App Router, Typ
 ## Getting started (Windows)
 
 ```powershell
+$env:DATABASE_URL="file:./dev.db"
 npm install
 npm run prisma:generate
 npm run db:push
