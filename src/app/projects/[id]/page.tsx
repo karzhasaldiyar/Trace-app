@@ -1,5 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { formatRoleLabel, formatShortDate, formatStatusLabel, formatTimestampLabel } from "@/lib/format";
+import {
+  formatActivityTypeLabel,
+  formatRoleLabel,
+  formatShortDate,
+  formatStatusLabel,
+  formatTimestampLabel
+} from "@/lib/format";
 import { addMember, runStaleCheck, updateProjectSettings, uploadDocument } from "@/lib/actions";
 import AddMemberForm from "@/components/forms/AddMemberForm";
 import ProjectDocumentUploadForm from "@/components/forms/ProjectDocumentUploadForm";
@@ -169,19 +175,35 @@ export default async function ProjectDetailPage({
       <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="card space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">Activity</h2>
-          <div className="space-y-3">
-            {project.activityLogs.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-lg border border-slate-200 bg-white p-4"
-              >
-                <div className="text-xs font-semibold text-slate-500">
-                  {formatTimestampLabel(item.ts)}
+          {project.activityLogs.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+              No activity yet. Project events will appear here.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {project.activityLogs.map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded-lg border border-slate-200 bg-white p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                    <span className="font-semibold">
+                      {formatTimestampLabel(item.ts)}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                      {formatActivityTypeLabel(item.eventType)}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-sm text-slate-700">
+                    {item.message}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    Actor: {item.actorName}
+                  </div>
                 </div>
-                <div className="mt-2 text-sm text-slate-700">{item.message}</div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <ProjectDocumentUploadForm action={uploadDocumentAction} />

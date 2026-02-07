@@ -99,3 +99,32 @@ export function formatRoleLabel(role: string) {
       return role;
   }
 }
+
+export function formatActivityTypeLabel(eventType: string) {
+  switch (eventType) {
+    case "PROJECT_CREATED":
+      return "Project created";
+    case "MEMBER_ADDED":
+      return "Member added";
+    case "MEMBER_REMOVED":
+      return "Member removed";
+    case "DOC_UPLOADED":
+      return "Document uploaded";
+    case "DOC_VERSION_UPLOADED":
+      return "New version uploaded";
+    case "DOC_METADATA_CHANGED":
+      return "Metadata updated";
+    case "STALE_CHECK_RUN":
+      return "Stale check run";
+    case "STALE_MARKED":
+      return "Document marked stale";
+    case "NOTIFICATIONS_MARKED_READ":
+      return "Notifications marked read";
+    default:
+      return eventType
+        .toLowerCase()
+        .split("_")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+  }
+}
