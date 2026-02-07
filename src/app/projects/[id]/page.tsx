@@ -1,8 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { formatRoleLabel, formatShortDate, formatStatusLabel, formatTimestampLabel } from "@/lib/format";
-import { addMember, uploadDocument } from "@/lib/actions";
+import { addMember, runStaleCheck, updateProjectSettings, uploadDocument } from "@/lib/actions";
 import AddMemberForm from "@/components/forms/AddMemberForm";
 import ProjectDocumentUploadForm from "@/components/forms/ProjectDocumentUploadForm";
+import ProjectSettingsForm from "@/components/forms/ProjectSettingsForm";
+import RunStaleCheckForm from "@/components/forms/RunStaleCheckForm";
 
 const tabs = ["Documents", "Members", "Activity", "Settings"];
 
@@ -48,6 +50,11 @@ export default async function ProjectDetailPage({
 
   const addMemberAction = addMember.bind(null, project.id);
   const uploadDocumentAction = uploadDocument.bind(null, project.id);
+  const updateProjectSettingsAction = updateProjectSettings.bind(
+    null,
+    project.id
+  );
+  const runStaleCheckAction = runStaleCheck.bind(null, project.id);
 
   return (
     <div className="space-y-8">
@@ -178,6 +185,14 @@ export default async function ProjectDetailPage({
         </div>
 
         <ProjectDocumentUploadForm action={uploadDocumentAction} />
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <ProjectSettingsForm
+          action={updateProjectSettingsAction}
+          staleDays={project.staleDays}
+        />
+        <RunStaleCheckForm action={runStaleCheckAction} />
       </section>
     </div>
   );

@@ -677,3 +677,134 @@ export async function markNotificationsRead(
   revalidatePath("/notifications");
   return {};
 }
+
+export async function updateProjectSettings(
+  projectId: string,
+  _prevState: ActionState,
+  formData: FormData
+) {
+  const actorResult = getActorName(formData);
+  if ("error" in actorResult) {
+    return { error: actorResult.error };
+  }
+
+  const member = await prisma.member.findFirst({
+    where: { projectId, name: actorResult.actorName }
+  });
+
+  if (!member) {
+    return { error: "Member not found." };
+  }
+
+  if (member.role === "CLIENT") {
+    return { error: "Client role is read-only." };
+  }
+
+  if (member.role !== "OWNER" && member.role !== "ADMIN") {
+    return { error: "Only owners and admins can update project settings." };
+  }
+
+  const staleDaysValue = String(formData.get("staleDays") ?? "").trim();
+  const staleDays = Number.parseInt(staleDaysValue, 10);
+
+  if (Number.isNaN(staleDays) || staleDays < 0) {
+    return { error: "Stale days must be a non-negative number." };
+  }
+
+  await prisma.project.update({
+    where: { id: projectId },
+    data: { staleDays }
+  });
+
+  revalidatePath(`/projects/${projectId}`);
+  return {};
+}
+
+export async function runStaleCheck(
+  projectId: string,
+  _prevState: ActionState,
+  formData: FormData
+) {
+  const actorResult = getActorName(formData);
+  if ("error" in actorResult) {
+    return { error: actorResult.error };
+  }
+
+  const member = await prisma.member.findFirst({
+    where: { projectId, name: actorResult.actorName }
+  });
+
+  if (!member) {
+    return { error: "Member not found." };
+  }
+
+  if (member.role === "CLIENT") {
+    return { error: "Client role is read-only." };
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { staleDays: true }
+  });
+
+  if (!project) {
+    return { error: "Project not found." };
+  }
+
+  const threshold = new Date(
+    Date.now() - project.staleDays * 24 * 60 * 60 * 1000
+  );
+
+  const staleCandidates = await prisma.document.findMany({
+    where: {
+      projectId,
+      stale: false,
+      status: { notIn: ["FINAL", "SENT"] },
+      lastActivityAt: { lt: threshold }
+    }
+  });
+
+  if (staleCandidates.length === 0) {
+    revalidatePath(`/projects/${projectId}`);
+    return {};
+  }
+
+  await prisma.document.updateMany({
+    where: { id: { in: staleCandidates.map((doc) => doc.id) } },
+    data: { stale: true }
+  });
+
+  await prisma.activityLog.createMany({
+    data: staleCandidates.map((doc) => ({
+      projectId,
+      documentId: doc.id,
+      actorName: actorResult.actorName,
+      eventType: "STALE_MARKED",
+      message: `${actorResult.actorName} marked ${doc.title} as stale.`,
+      payloadJson: JSON.stringify({ documentId: doc.id })
+    }))
+  });
+
+  const recipients = await prisma.member.findMany({
+    where: { projectId, role: { not: "CLIENT" } },
+    select: { name: true }
+  });
+
+  if (recipients.length > 0) {
+    await prisma.notification.createMany({
+      data: staleCandidates.flatMap((doc) =>
+        recipients.map((recipient) => ({
+          projectId,
+          documentId: doc.id,
+          actorName: actorResult.actorName,
+          type: "Document marked stale",
+          message: `${doc.title} was marked stale for ${recipient.name}.`
+        }))
+      )
+    });
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/notifications");
+  return {};
+}

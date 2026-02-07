@@ -7,7 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum MemberRole {
+enum Role {
   OWNER
   ADMIN
   MEMBER
@@ -38,7 +38,7 @@ model Member {
   projectId         String
   name              String
   email             String
-  role              MemberRole
+  role              Role
   project           Project   @relation(fields: [projectId], references: [id])
   assignedDocuments Document[] @relation("AssignedDocuments")
 }
