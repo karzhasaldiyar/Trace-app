@@ -15,12 +15,36 @@ type MetadataDiff = {
   after: string;
 };
 
+type ContentTextChange =
+  | { type: "changed"; before: string; after: string }
+  | { type: "added"; before: ""; after: string };
+
+type ContentSummary = {
+  textChanges: ContentTextChange[];
+  tableRowAdds: { rowsAdded: number; samples: string[] }[];
+};
+
 const parseMetadataDiffs = (payloadJson: string) => {
   try {
     const parsed = JSON.parse(payloadJson) as { diffs?: MetadataDiff[] };
     return parsed.diffs ?? [];
   } catch {
     return [];
+  }
+};
+
+const parseContentSummary = (payloadJson: string) => {
+  try {
+    const parsed = JSON.parse(payloadJson) as {
+      contentSummary?: ContentSummary;
+      contentSummaryError?: string;
+    };
+    return {
+      summary: parsed.contentSummary,
+      error: parsed.contentSummaryError
+    };
+  } catch {
+    return { summary: undefined, error: "Unable to read content summary." };
   }
 };
 
@@ -174,6 +198,106 @@ export default async function DocumentDetailPage({
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+                {item.eventType === "DOC_VERSION_UPLOADED" && (
+                  <div className="mt-3 space-y-3 text-xs text-slate-600">
+                    {(() => {
+                      const { summary, error } = parseContentSummary(
+                        item.payloadJson
+                      );
+                      if (!summary && !error) {
+                        return null;
+                      }
+                      return (
+                        <div className="space-y-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Content changes
+                          </div>
+                          {error ? (
+                            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                              {error}
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {summary?.textChanges?.length ? (
+                                <div className="space-y-2">
+                                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                    Text changes
+                                  </div>
+                                  <div className="space-y-2">
+                                    {summary.textChanges.map(
+                                      (change, index) => (
+                                        <div
+                                          key={`${change.type}-${index}`}
+                                          className={`grid gap-2 ${
+                                            change.type === "changed"
+                                              ? "sm:grid-cols-2"
+                                              : ""
+                                          }`}
+                                        >
+                                          {change.type === "changed" ? (
+                                            <>
+                                              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                                                <div className="text-[10px] uppercase text-slate-400">
+                                                  Before
+                                                </div>
+                                                <div className="text-xs text-slate-700">
+                                                  {change.before || "—"}
+                                                </div>
+                                              </div>
+                                              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                                                <div className="text-[10px] uppercase text-slate-400">
+                                                  After
+                                                </div>
+                                                <div className="text-xs text-slate-700">
+                                                  {change.after || "—"}
+                                                </div>
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                                              <div className="text-[10px] uppercase text-slate-400">
+                                                Added
+                                              </div>
+                                              <div className="text-xs text-slate-700">
+                                                {change.after || "—"}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+                              ) : null}
+                              {summary?.tableRowAdds?.length ? (
+                                <div className="space-y-2">
+                                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                    Table changes
+                                  </div>
+                                  {summary.tableRowAdds.map((entry, index) => (
+                                    <div key={index} className="space-y-1">
+                                      <div className="text-xs text-slate-700">
+                                        Added {entry.rowsAdded} row
+                                        {entry.rowsAdded === 1 ? "" : "s"}
+                                      </div>
+                                      {entry.samples.length ? (
+                                        <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">
+                                          {entry.samples.map((sample) => (
+                                            <li key={sample}>{sample}</li>
+                                          ))}
+                                        </ul>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
