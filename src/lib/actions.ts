@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { ROLES, isDocumentStatus, isPrivilegedRole } from "@/lib/roles";
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
@@ -15,7 +16,6 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const DOCX_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 ]);
-
 async function ensureUploadsDir(...parts: string[]) {
   const uploadRoot = path.join(process.cwd(), "uploads", ...parts);
   await mkdir(uploadRoot, { recursive: true });
@@ -174,27 +174,39 @@ function getActorName(formData: FormData) {
   return { actorName };
 }
 
-async function ensureNotClient(projectId: string, actorName: string) {
+async function requireOwnerAdminForProject(
+  projectId: string,
+  actorName: string,
+  actionLabel: string
+) {
   const member = await prisma.member.findFirst({
     where: { projectId, name: actorName }
   });
-  if (member?.role === "CLIENT") {
-    return { error: "Client role is read-only." };
+
+  if (!member || !isPrivilegedRole(member.role)) {
+    return { error: `Only owners and admins can ${actionLabel}.` };
   }
+
+  return { member };
+}
+
+async function requireOwnerAdminGlobal(actorName: string, actionLabel: string) {
+  const member = await prisma.member.findFirst({
+    where: { name: actorName, role: { in: ROLES } }
+  });
+
+  if (!member || !isPrivilegedRole(member.role)) {
+    return { error: `Only owners and admins can ${actionLabel}.` };
+  }
+
   return { member };
 }
 
 function parseRole(roleInput: string) {
-  switch (roleInput.toUpperCase()) {
-    case "OWNER":
-    case "ADMIN":
-    case "MEMBER":
-    case "VIEWER":
-    case "CLIENT":
-      return roleInput.toUpperCase();
-    default:
-      return "MEMBER";
-  }
+  const normalized = roleInput.toUpperCase().trim();
+  return ROLES.includes(normalized as (typeof ROLES)[number])
+    ? normalized
+    : "MEMBER";
 }
 
 function formatRole(role: string) {
@@ -202,16 +214,8 @@ function formatRole(role: string) {
 }
 
 function parseStatus(statusInput: string) {
-  switch (statusInput.toUpperCase().replace(/\s+/g, "_")) {
-    case "IN_REVIEW":
-      return "IN_REVIEW";
-    case "FINAL":
-      return "FINAL";
-    case "SENT":
-      return "SENT";
-    default:
-      return "DRAFT";
-  }
+  const normalized = statusInput.toUpperCase().replace(/\s+/g, "_");
+  return isDocumentStatus(normalized) ? normalized : "DRAFT";
 }
 
 export async function createProject(
@@ -221,6 +225,17 @@ export async function createProject(
   const actorResult = getActorName(formData);
   if ("error" in actorResult) {
     return { error: actorResult.error };
+  }
+
+  const memberCount = await prisma.member.count();
+  if (memberCount > 0) {
+    const roleCheck = await requireOwnerAdminGlobal(
+      actorResult.actorName,
+      "create projects"
+    );
+    if (roleCheck.error) {
+      return { error: roleCheck.error };
+    }
   }
 
   const name = String(formData.get("projectName") ?? "").trim();
@@ -271,9 +286,13 @@ export async function addMember(
     return { error: actorResult.error };
   }
 
-  const clientCheck = await ensureNotClient(projectId, actorResult.actorName);
-  if (clientCheck.error) {
-    return { error: clientCheck.error };
+  const roleCheck = await requireOwnerAdminForProject(
+    projectId,
+    actorResult.actorName,
+    "add members"
+  );
+  if (roleCheck.error) {
+    return { error: roleCheck.error };
   }
 
   const name = String(formData.get("memberName") ?? "").trim();
@@ -329,9 +348,13 @@ export async function uploadDocument(
     return { error: actorResult.error };
   }
 
-  const clientCheck = await ensureNotClient(projectId, actorResult.actorName);
-  if (clientCheck.error) {
-    return { error: clientCheck.error };
+  const roleCheck = await requireOwnerAdminForProject(
+    projectId,
+    actorResult.actorName,
+    "upload documents"
+  );
+  if (roleCheck.error) {
+    return { error: roleCheck.error };
   }
 
   const changeNote = String(formData.get("changeNote") ?? "").trim();
@@ -407,12 +430,13 @@ export async function updateDocumentMetadata(
     return { error: "Document not found." };
   }
 
-  const clientCheck = await ensureNotClient(
+  const roleCheck = await requireOwnerAdminForProject(
     document.projectId,
-    actorResult.actorName
+    actorResult.actorName,
+    "update document metadata"
   );
-  if (clientCheck.error) {
-    return { error: clientCheck.error };
+  if (roleCheck.error) {
+    return { error: roleCheck.error };
   }
 
   const statusInput = String(formData.get("status") ?? "DRAFT").trim();
@@ -433,11 +457,6 @@ export async function updateDocumentMetadata(
     .split(",")
     .map((tag) => tag.trim())
     .filter(Boolean);
-
-  const memberRole = clientCheck.member?.role;
-  if (status === "FINAL" && memberRole !== "OWNER" && memberRole !== "ADMIN") {
-    return { error: "Only owners and admins can mark documents as Final." };
-  }
 
   const formatDateValue = (value: Date | null) =>
     value ? value.toISOString().split("T")[0] : "";
@@ -537,12 +556,13 @@ export async function addDocumentVersion(
     return { error: "Document not found." };
   }
 
-  const clientCheck = await ensureNotClient(
+  const roleCheck = await requireOwnerAdminForProject(
     document.projectId,
-    actorResult.actorName
+    actorResult.actorName,
+    "upload new document versions"
   );
-  if (clientCheck.error) {
-    return { error: clientCheck.error };
+  if (roleCheck.error) {
+    return { error: roleCheck.error };
   }
 
   const changeNote = String(formData.get("changeNote") ?? "").trim();
@@ -662,18 +682,53 @@ export async function markNotificationsRead(
     return { error: actorResult.error };
   }
 
-  const clientMember = await prisma.member.findFirst({
-    where: { name: actorResult.actorName, role: "CLIENT" }
+  const roleCheck = await requireOwnerAdminGlobal(
+    actorResult.actorName,
+    "mark notifications read"
+  );
+  if (roleCheck.error) {
+    return { error: roleCheck.error };
+  }
+
+  const unreadNotifications = await prisma.notification.findMany({
+    where: { isRead: false },
+    select: { projectId: true }
   });
 
-  if (clientMember) {
-    return { error: "Client role is read-only." };
-  }
+  const notificationsByProject = unreadNotifications.reduce(
+    (acc, notification) => {
+      acc.set(
+        notification.projectId,
+        (acc.get(notification.projectId) ?? 0) + 1
+      );
+      return acc;
+    },
+    new Map<string, number>()
+  );
 
   await prisma.notification.updateMany({
     data: { isRead: true }
   });
 
+  const activityEntries = Array.from(notificationsByProject.entries()).map(
+    ([projectId, count]) => ({
+      projectId,
+      actorName: actorResult.actorName,
+      eventType: "NOTIFICATIONS_MARKED_READ",
+      message: `${actorResult.actorName} marked ${count} notification${
+        count === 1 ? "" : "s"
+      } as read.`,
+      payloadJson: JSON.stringify({ count })
+    })
+  );
+
+  if (activityEntries.length > 0) {
+    await prisma.activityLog.createMany({ data: activityEntries });
+  }
+
+  notificationsByProject.forEach((_, projectId) => {
+    revalidatePath(`/projects/${projectId}`);
+  });
   revalidatePath("/notifications");
   return {};
 }
@@ -696,11 +751,7 @@ export async function updateProjectSettings(
     return { error: "Member not found." };
   }
 
-  if (member.role === "CLIENT") {
-    return { error: "Client role is read-only." };
-  }
-
-  if (member.role !== "OWNER" && member.role !== "ADMIN") {
+  if (!isPrivilegedRole(member.role)) {
     return { error: "Only owners and admins can update project settings." };
   }
 
@@ -730,16 +781,13 @@ export async function runStaleCheck(
     return { error: actorResult.error };
   }
 
-  const member = await prisma.member.findFirst({
-    where: { projectId, name: actorResult.actorName }
-  });
-
-  if (!member) {
-    return { error: "Member not found." };
-  }
-
-  if (member.role === "CLIENT") {
-    return { error: "Client role is read-only." };
+  const roleCheck = await requireOwnerAdminForProject(
+    projectId,
+    actorResult.actorName,
+    "run stale checks"
+  );
+  if (roleCheck.error) {
+    return { error: roleCheck.error };
   }
 
   const project = await prisma.project.findUnique({
@@ -765,6 +813,15 @@ export async function runStaleCheck(
   });
 
   if (staleCandidates.length === 0) {
+    await prisma.activityLog.create({
+      data: {
+        projectId,
+        actorName: actorResult.actorName,
+        eventType: "STALE_CHECK_RUN",
+        message: `${actorResult.actorName} ran a stale check. No documents were marked stale.`,
+        payloadJson: JSON.stringify({ count: 0 })
+      }
+    });
     revalidatePath(`/projects/${projectId}`);
     return {};
   }
@@ -772,6 +829,18 @@ export async function runStaleCheck(
   await prisma.document.updateMany({
     where: { id: { in: staleCandidates.map((doc) => doc.id) } },
     data: { stale: true }
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      projectId,
+      actorName: actorResult.actorName,
+      eventType: "STALE_CHECK_RUN",
+      message: `${actorResult.actorName} ran a stale check and marked ${staleCandidates.length} document${
+        staleCandidates.length === 1 ? "" : "s"
+      } stale.`,
+      payloadJson: JSON.stringify({ count: staleCandidates.length })
+    }
   });
 
   await prisma.activityLog.createMany({
